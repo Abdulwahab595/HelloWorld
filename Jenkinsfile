@@ -1,57 +1,36 @@
 pipeline {
     agent any
 
-    // Define environment variables (available in all stages)
-    environment {
-        APP_VERSION = "1.0.5"
-        DEPLOY_ENV = "production"
-    }
-
-    // Define build tools (Maven in this case)
-    tools {
-        maven "Maven_3.9"   // this name must match the Maven installation name in Jenkins
+    parameters {
+        string(name: 'APP_ENV', defaultValue: 'dev', description: 'Application environment')
+        choice(name: 'BUILD_TYPE', choices: ['Debug', 'Release'], description: 'Build Type')
+        booleanParam(name: 'EXECUTE_TESTS', defaultValue: true, description: 'Run Test Stage?')
     }
 
     stages {
-
         stage('Build') {
             steps {
-                echo "Building application version: ${APP_VERSION}"
-                echo "Environment: ${DEPLOY_ENV}"
-
-                // Using Maven installed via tools{}
-                sh "mvn --version"
-                sh "mvn clean install"
+                echo "Building the project..."
+                echo "Environment: ${params.APP_ENV}"
+                echo "Build Type: ${params.BUILD_TYPE}"
             }
         }
 
         stage('Test') {
+            when {
+                expression { return params.EXECUTE_TESTS == true }
+            }
             steps {
-                echo 'Testing..'
-                // test commands here...
+                echo 'Running tests...'
+                // Add test commands here
             }
         }
 
         stage('Deploy') {
             steps {
-                echo "Deploying version ${APP_VERSION} to ${DEPLOY_ENV}"
-                // deployment commands...
+                echo "Deploying application..."
+                // Add deployment commands here
             }
-        }
-    }
-
-    post {
-        always {
-            echo 'Post build condition running'
-        }
-        success {
-            echo 'This runs only if the build succeeded'
-        }
-        failure {
-            echo 'Post action if build failed'
-        }
-        unstable {
-            echo 'This runs if the build is unstable'
         }
     }
 }
