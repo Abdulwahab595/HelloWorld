@@ -22,7 +22,7 @@ pipeline {
         stage('SonarCloud Analysis') {
             steps {
                 withCredentials([string(credentialsId: 'sonarcloud-token', variable: 'TOKEN')]) {
-                    withSonarQubeEnv('SonarCloud') {
+                    withSonarQubeEnv('sonarcloud-token') {
                         bat """
                             ${tool 'SonarScanner'}\\bin\\sonar-scanner.bat ^
                               -Dsonar.projectKey=Abdulwahab595_HelloWorld ^
