@@ -2,15 +2,15 @@ pipeline {
     agent any
 
     environment {
-        PROJECT = "Static-3"
-        ORG = "mightykarim"
+        PROJECT = "Abdulwahab595_HelloWorld"
+        ORG = "abdulwahab595"
     }
 
     stages {
 
         stage('Checkout') {
             steps {
-                git branch: 'main', url: 'https://github.com/mightykarim/Static-3.git'
+                git branch: 'main', url: 'https://github.com/Abdulwahab595/HelloWorld.git'
             }
         }
 
@@ -25,8 +25,8 @@ pipeline {
                     withSonarQubeEnv('SonarCloud') {
                         bat """
                             ${tool 'SonarScanner'}\\bin\\sonar-scanner.bat ^
-                              -Dsonar.projectKey=Static-3 ^
-                              -Dsonar.organization=mightykarim ^
+                              -Dsonar.projectKey=Abdulwahab595_HelloWorld ^
+                              -Dsonar.organization=abdulwahab595 ^
                               -Dsonar.sources=. ^
                               -Dsonar.host.url=https://sonarcloud.io ^
                               -Dsonar.login=%TOKEN% ^
