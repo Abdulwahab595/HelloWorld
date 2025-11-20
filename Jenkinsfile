@@ -1,35 +1,63 @@
 pipeline {
     agent any
 
-    parameters {
-        string(name: 'APP_ENV', defaultValue: 'dev', description: 'Application environment')
-        choice(name: 'BUILD_TYPE', choices: ['Debug', 'Release'], description: 'Build Type')
-        booleanParam(name: 'EXECUTE_TESTS', defaultValue: true, description: 'Run Test Stage?')
+    environment {
+        PROJECT = "Static-3"
+        ORG = "mightykarim"
     }
 
     stages {
-        stage('Build') {
+
+        stage('Checkout') {
             steps {
-                echo "Building the project..."
-                echo "Environment: ${params.APP_ENV}"
-                echo "Build Type: ${params.BUILD_TYPE}"
+                git branch: 'main', url: 'https://github.com/mightykarim/Static-3.git'
             }
         }
 
-        stage('Test') {
-            when {
-                expression { return params.EXECUTE_TESTS == true }
-            }
+        stage('Build') {
             steps {
-                echo 'Running tests...'
-                // Add test commands here
+                echo "Build step..."
+            }
+        }
+        stage('SonarCloud Analysis') {
+            steps {
+                withCredentials([string(credentialsId: 'sonarcloud-token', variable: 'TOKEN')]) {
+                    withSonarQubeEnv('SonarCloud') {
+                        bat """
+                            ${tool 'SonarScanner'}\\bin\\sonar-scanner.bat ^
+                              -Dsonar.projectKey=Static-3 ^
+                              -Dsonar.organization=mightykarim ^
+                              -Dsonar.sources=. ^
+                              -Dsonar.host.url=https://sonarcloud.io ^
+                              -Dsonar.login=%TOKEN% ^
+                              -Dsonar.c.file.suffixes=- ^
+                              -Dsonar.cpp.file.suffixes=- ^
+                              -Dsonar.objc.file.suffixes=-
+                        """
+                    }
+                }
+            }
+        }
+
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 2, unit: 'MINUTES') {
+                    script {
+                        def qg = waitForQualityGate()
+                        if (qg.status == 'NONE') {
+                            echo "Warning: No quality gate configured. Proceeding with build."
+                        } else if (qg.status != 'OK') {
+                            error "Pipeline aborted due to quality gate failure: ${qg.status}"
+                        }
+                    }
+                }
             }
         }
 
         stage('Deploy') {
             steps {
-                echo "Deploying application..."
-                // Add deployment commands here
+                echo "Deployment step..."
             }
         }
     }
