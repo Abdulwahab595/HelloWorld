@@ -127,6 +127,10 @@ def main() -> int:
     ap.add_argument("--keep-duplicates", action="store_true")
     ap.add_argument("--leaky", action="store_true",
                     help="shuffle windows instead of grouping by session (inflated)")
+    ap.add_argument("--shuffle-labels", action="store_true",
+                    help="sanity control: randomly permute labels within the "
+                         "dataset.  A correct pipeline must collapse to chance "
+                         "(1/n_classes).  Anything above that is a leak or a bug.")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default="reports")
     args = ap.parse_args()
@@ -144,6 +148,17 @@ def main() -> int:
     reps, dropped = drop_rare_classes(reps, args.min_sessions)
     X, y, groups, classes = build_samples(reps, mode=args.mode,
                                           window=args.window, stride=args.stride)
+
+    if args.shuffle_labels:
+        # Permute labels at the *session* level, so every window of a recording
+        # keeps one consistent (wrong) label.  Shuffling per window would leave
+        # the majority-vote structure intact and muddy the control.
+        rng = np.random.default_rng(args.seed)
+        sess = sorted(set(groups.tolist()))
+        lab_of = {g: y[groups == g][0] for g in sess}
+        shuffled = rng.permutation([lab_of[g] for g in sess])
+        remap = dict(zip(sess, shuffled))
+        y = np.array([remap[g] for g in groups.tolist()], dtype=np.int64)
 
     print("=" * 78)
     print(f"REP-AI TCN  --  exercise={args.exercise}  mode={args.mode}  "
