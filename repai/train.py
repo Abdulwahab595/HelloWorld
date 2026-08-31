@@ -275,7 +275,10 @@ def main() -> int:
         ckpt = out / f"{args.exercise}_tcn.pt"
         torch.save({"state_dict": best[0]["model"], "mean": best[0]["mean"],
                     "std": best[0]["std"], "classes": classes,
-                    "n_features": X.shape[-1], "window": args.window}, ckpt)
+                    "n_features": X.shape[-1], "window": args.window,
+                    # so repai.predict can warn when asked to score files this
+                    # model has already seen
+                    "train_files": sorted({r.source_file for r in reps})}, ckpt)
         print(f"\nsaved {ckpt}  ({best[1]:.3f} macro-F1 fold)")
     print(f"wrote {out / f'{tag}_metrics.json'}   [{time.time() - t0:.0f}s]")
     return 0

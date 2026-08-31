@@ -57,6 +57,7 @@
     "min_sessions": 3,
     "keep_duplicates": false,
     "leaky": false,
+    "shuffle_labels": false,
     "seed": 0,
     "out": "reports"
   }

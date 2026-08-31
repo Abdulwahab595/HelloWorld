@@ -27,7 +27,7 @@ from typing import Iterator, Sequence
 
 import numpy as np
 
-from .schema import EXERCISE_DIRS, FRAME_FEATURES, MIRROR_PAIRS
+from .schema import EXERCISE_DIRS, FRAME_FEATURES, LABEL_ALIASES, MIRROR_PAIRS
 
 
 @dataclasses.dataclass
@@ -82,13 +82,24 @@ def load_reps(
         seen.add(digest)
 
         rel = path.relative_to(root)
-        ex = EXERCISE_DIRS.get(rel.parts[0], rel.parts[0])
+        session = json.loads(raw)
+
+        # The canonical layout is <EXERCISE>/<label>/<speed>/<file>.json.  When
+        # `root` points partway into that tree the folder names are no longer
+        # where we expect them, so fall back to the fields inside the file --
+        # otherwise the label silently becomes a filename.
+        if len(rel.parts) >= 4:
+            ex = EXERCISE_DIRS.get(rel.parts[0], rel.parts[0])
+            label = rel.parts[1]
+            speed = rel.parts[2]
+        else:
+            ex = session.get("exercise", "unknown")
+            label = session.get("label", "unknown")
+            speed = rel.parts[-2] if len(rel.parts) > 1 else "normal"
+        label = LABEL_ALIASES.get(label, label)
+
         if exercise is not None and ex != exercise:
             continue
-        label = rel.parts[1]
-        speed = rel.parts[2] if len(rel.parts) > 3 else "normal"
-
-        session = json.loads(raw)
         for rep in session["reps"]:
             arr = _frames_to_array(rep["frames"])
             if len(arr) < min_frames:

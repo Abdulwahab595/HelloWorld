@@ -84,6 +84,13 @@ LABELS = {
     ],
 }
 
+# The app writes some labels under a different name than the folder it files
+# them in.  Folder wins where both exist; this map is the fallback for files
+# read outside their usual directory layout.
+LABEL_ALIASES = {
+    "partial_range": "incomplete_extension",
+}
+
 # Folder name -> exercise key.
 EXERCISE_DIRS = {
     "BICEPT_CURL": "bicep_curl",
