@@ -1,0 +1,12 @@
+{
+  "classes": [
+    "correct",
+    "elbow_moving",
+    "incomplete_extension"
+  ],
+  "cues": {
+    "correct": "Good form, keep going.",
+    "elbow_moving": "Keep your elbows pinned to your sides.",
+    "incomplete_extension": "Extend all the way at the bottom."
+  }
+}

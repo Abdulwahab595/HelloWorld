@@ -1,0 +1,63 @@
+{
+  "exercise": "bicep_curl",
+  "classes": [
+    "correct",
+    "elbow_moving",
+    "incomplete_extension"
+  ],
+  "leaky": false,
+  "sessions": 62,
+  "reps": 496,
+  "samples": 1812,
+  "dropped_classes": {
+    "fast_swing": 1
+  },
+  "window_accuracy": 0.8807947019867549,
+  "window_macro_f1": 0.8836946264946152,
+  "rep_accuracy": 0.9274193548387096,
+  "rep_macro_f1": 0.9279489950491392,
+  "fold_macro_f1": [
+    0.9568698188272383,
+    0.8538810956969525,
+    0.8299191749643579,
+    0.8858653533065003,
+    0.9004195611698463
+  ],
+  "confusion_matrix": [
+    [
+      156,
+      5,
+      23
+    ],
+    [
+      1,
+      159,
+      0
+    ],
+    [
+      6,
+      1,
+      145
+    ]
+  ],
+  "params": 51795,
+  "receptive_field": 61,
+  "args": {
+    "data": "data/raw/DATASET_COLLECTION",
+    "exercise": "bicep_curl",
+    "mode": "window",
+    "window": 30,
+    "stride": 10,
+    "folds": 5,
+    "epochs": 30,
+    "batch": 64,
+    "lr": 0.003,
+    "dropout": 0.25,
+    "aug": 1.0,
+    "min_sessions": 3,
+    "keep_duplicates": false,
+    "leaky": false,
+    "seed": 0,
+    "out": "reports"
+  }
+}

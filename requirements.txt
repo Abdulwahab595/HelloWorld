@@ -1,0 +1,13 @@
+# core training pipeline
+numpy>=1.26
+torch>=2.2
+scikit-learn>=1.4
+
+# model export (repai.export)
+onnx>=1.16
+onnxscript>=0.1
+
+# only needed by scripts/video_to_repai_json.py, when converting
+# third-party exercise videos into REP-AI sessions
+# mediapipe>=0.10
+# opencv-python>=4.9

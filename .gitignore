@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# synthetic smoke-test data -- regenerate with scripts/make_squat_smoketest.py.
+# never commit it: it must not be mistaken for collected recordings.
+data/raw/DATASET_COLLECTION/SQUATS/*/*/squat_synth_*.json
+reports/squat_*
+
+# external data converted from third-party videos; large and licence-bound
+data/external/
+
+# trained artefacts -- regenerate with `python -m repai.train`.
+# the metrics JSON is committed as the record of the reported result.
+reports/*.pt
+reports/*.onnx
+reports/*.onnx.data
