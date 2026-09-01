@@ -182,14 +182,51 @@ tried and *rejected*: the misclassifications became more confident (0.60 ->
 0.70) and cross-validated rep accuracy fell 0.927 -> 0.919. The change was
 reverted. Recording it here so the experiment is not repeated.
 
+### Correction after the second clip
+
+The conclusion above -- that a pure side profile is the problem -- is
+**wrong**, and the second test is what showed it.
+
+A 10 s AI-generated clip (1280x720, also a pure side profile, also with the
+far arm occluded the whole time, plain white studio wall) scored **4/4
+correct at 0.78-0.91 confidence**. Same camera geometry, opposite outcome.
+
+Lining the two up against the class means isolates the deciding channel:
+
+| channel | correct | elbow_moving | YouTube clip | AI clip |
+|---|---|---|---|---|
+| right_shoulder_angle (occluded arm) | 5.6 | 15.8 | **12.7** | **4.4** |
+| left_shoulder_angle (visible arm) | 8.2 | 15.0 | 9.1 | 2.2 |
+
+So the occluded arm *is* the channel that decides the verdict -- that part
+held. What does not hold is blaming the camera angle. Both clips hide the
+same arm. What differs is how well MediaPipe *estimates* it:
+
+- AI clip: plain white wall, sharp silhouette, 1280x720, no overlays.
+  Estimate lands at 4.4, near the `correct` mean.
+- YouTube clip: speckled brick wall, player UI drawn over the frame,
+  790x786. Estimate drifts to 12.7, on top of the `elbow_moving` signature.
+
+**The real finding: the model is sensitive to pose-estimation noise on
+occluded limbs, and that noise is driven by video quality, not view angle.**
+Two of the twelve input channels (`right_shoulder_angle`,
+`left_right_asymmetry`) depend on a limb the camera cannot see, so a noisy
+estimate there can flip the verdict on its own.
+
 **Consequences for the protocol:**
 
-1. Prefer a three-quarter view (roughly 30-45 degrees off-axis) over a pure
-   profile, for evaluation clips and for the app's own guidance. Both arms
-   need to be visible for the symmetry channels to mean anything.
-2. MediaPipe reports a `visibility` score per landmark. The converter
+1. MediaPipe reports a `visibility` score per landmark. The converter
    discards it. Carrying it through and gating the far-side channels on it
    -- or falling back to near-side-only features when a limb is occluded --
-   is the principled fix, and belongs in the phone pipeline too.
-3. One clip with 3 repetitions is not an evaluation. This is a diagnostic
-   that produced a concrete, testable cause; it is not a transfer result.
+   is the principled fix, and belongs in the phone pipeline too. This is now
+   the top-priority change, not the camera-angle guidance.
+2. Keep the background plain and the subject well separated from it when
+   recording. This matters more than the camera angle does.
+3. Do not read the 4/4 as a transfer result. A synthetic person on a blank
+   studio wall is the easiest input this system will ever see: no clothing
+   folds, no background clutter, no motion blur, no compression artefacts.
+   It shows the pipeline works end-to-end on video; it does not show the
+   model generalises to real strangers.
+4. Two clips, 7 repetitions total, is a diagnostic -- not an evaluation.
+   The held-out-subject number still has to come from recording real people
+   with the app.
