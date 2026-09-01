@@ -124,8 +124,24 @@ def segment_reps(frames: list[dict], key: str = "avg_elbow_angle",
         if now and not above and i - (boundaries[-1] if boundaries else 0) >= min_len:
             boundaries.append(i)
         above = now
-    cuts = [0] + boundaries + [len(frames)]
-    reps = [frames[a:b] for a, b in zip(cuts, cuts[1:]) if b - a >= min_len]
+    if not boundaries:
+        return []
+    # Segments between boundaries are whole reps.  The fragment before the
+    # first boundary and the one after the last are partial by construction --
+    # the clip started or stopped mid-rep.  Keeping them is the "giant first
+    # repetition" contamination described in the FYP-1 report, so they are
+    # only kept when long enough to plausibly be complete.
+    interior = [frames[a:b] for a, b in zip(boundaries, boundaries[1:])
+                if b - a >= min_len]
+    if not interior:
+        return []
+    typical = sorted(len(r) for r in interior)[len(interior) // 2]
+    head, tail = frames[:boundaries[0]], frames[boundaries[-1]:]
+    reps = list(interior)
+    if len(head) >= 0.7 * typical:
+        reps.insert(0, head)
+    if len(tail) >= 0.7 * typical:
+        reps.append(tail)
     return reps
 
 
@@ -148,6 +164,55 @@ def rep_summary(rep: list[dict], fps: int) -> dict:
     }
 
 
+MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/pose_landmarker/"
+             "pose_landmarker_lite/float16/1/pose_landmarker_lite.task")
+
+
+class PoseBackend:
+    """Wraps whichever MediaPipe pose API is installed.
+
+    MediaPipe 1.0 removed `mp.solutions.pose`; the replacement is the Tasks
+    API, which needs a .task model file downloaded separately.  Older releases
+    only have the legacy API.  Both are supported so the script does not
+    depend on which version the machine happens to have.
+    """
+
+    def __init__(self, model_path: str | None = None):
+        import mediapipe as mp
+        self.mp = mp
+        self.legacy = hasattr(mp, "solutions")
+        if self.legacy:
+            self.pose = mp.solutions.pose.Pose(
+                model_complexity=1, min_detection_confidence=0.5,
+                min_tracking_confidence=0.5, static_image_mode=False)
+            return
+
+        from mediapipe.tasks import python as mpp
+        from mediapipe.tasks.python import vision
+        path = pathlib.Path(model_path or "pose_landmarker.task")
+        if not path.exists():
+            raise SystemExit(
+                f"the Tasks API needs a model file and {path} is missing.\n"
+                f"download it once with:\n  curl -sSL -o {path} {MODEL_URL}\n"
+                f"then re-run, or pass --model <path>.")
+        self.pose = vision.PoseLandmarker.create_from_options(
+            vision.PoseLandmarkerOptions(
+                base_options=mpp.BaseOptions(model_asset_path=str(path)),
+                running_mode=vision.RunningMode.VIDEO))
+
+    def landmarks(self, rgb, timestamp_ms: int):
+        """Return the 33 landmarks for one frame, or None if no person."""
+        if self.legacy:
+            res = self.pose.process(rgb)
+            return res.pose_landmarks.landmark if res.pose_landmarks else None
+        image = self.mp.Image(image_format=self.mp.ImageFormat.SRGB, data=rgb)
+        res = self.pose.detect_for_video(image, timestamp_ms)
+        return res.pose_landmarks[0] if res.pose_landmarks else None
+
+    def close(self):
+        self.pose.close()
+
+
 def convert(path: pathlib.Path, exercise: str, label: str, pose, stride: int) -> dict | None:
     import cv2
     cap = cv2.VideoCapture(str(path))
@@ -160,12 +225,13 @@ def convert(path: pathlib.Path, exercise: str, label: str, pose, stride: int) ->
         if not ok:
             break
         if idx % stride == 0:
-            res = pose.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-            if res.pose_landmarks:
+            ts = int(1000 * idx / fps)
+            lm = pose.landmarks(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), ts)
+            if lm is not None:
                 frames.append({
                     "frame_id": kept,
-                    "timestamp": int(1000 * idx / fps),
-                    "features": frame_features(res.pose_landmarks.landmark),
+                    "timestamp": ts,
+                    "features": frame_features(lm),
                 })
                 kept += 1
         idx += 1
@@ -201,12 +267,14 @@ def main() -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--stride", type=int, default=1, help="process every Nth frame")
     ap.add_argument("--glob", default="*.mp4")
+    ap.add_argument("--model", help="path to pose_landmarker.task (MediaPipe >= 1.0 only)")
     args = ap.parse_args()
 
     try:
-        import mediapipe as mp
+        import mediapipe  # noqa: F401
+        import cv2  # noqa: F401
     except ImportError:
-        print("mediapipe is required:  pip install mediapipe opencv-python", file=sys.stderr)
+        print("required:  pip install mediapipe opencv-python", file=sys.stderr)
         return 1
 
     videos = sorted(pathlib.Path(args.videos).glob(args.glob))
@@ -216,8 +284,8 @@ def main() -> int:
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
-    pose = mp.solutions.pose.Pose(model_complexity=1, min_detection_confidence=0.5,
-                                  min_tracking_confidence=0.5, static_image_mode=False)
+    pose = PoseBackend(args.model)
+    print(f"pose backend: {'legacy solutions API' if pose.legacy else 'Tasks API'}")
     ok = skipped = total_reps = 0
     for v in videos:
         session = convert(v, args.exercise, args.label, pose, args.stride)

@@ -8,6 +8,12 @@ onnx>=1.16
 onnxscript>=0.1
 
 # only needed by scripts/video_to_repai_json.py, when converting
-# third-party exercise videos into REP-AI sessions
+# third-party exercise videos into REP-AI sessions.
+# MediaPipe >= 1.0 removed the `solutions.pose` API and needs a model file:
+#   curl -sSL -o pose_landmarker.task https://storage.googleapis.com/\
+# mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/\
+# pose_landmarker_lite.task
+# The converter supports both that and the older API.  On Linux the Tasks API
+# also needs system GL libs:  apt-get install libegl1 libgl1 libgles2
 # mediapipe>=0.10
 # opencv-python>=4.9
