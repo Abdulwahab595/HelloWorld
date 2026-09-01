@@ -145,3 +145,51 @@ order.
 [faqaform]: https://forms.gle/PbPTX1eVxGpa3QG88
 [fit3d]: https://fit3d.imar.ro/
 [irep]: https://medium.com/infinity-ai/infiniterep-an-open-source-synthetic-dataset-for-remote-fitness-and-pt-applications-906946643e74
+
+## Field note: what happened on the first real video
+
+A 6.3 s YouTube clip (`Dumbbell Bicep Curl Side View`, 790x786, static
+tripod, plain wall, full body in frame) was pushed through the whole
+pipeline. It is worth recording what went right and what did not, because
+the failure is instructive and will recur.
+
+**Worked:** MediaPipe found the pose on every frame, rep segmentation
+returned 3 repetitions, and `check_features.py` put all 12 channels inside
+the training range (largest z = 0.95). So the Python geometry agrees with
+the phone's Kotlin extractor on real footage, not just on a self-test.
+
+**Failed:** the model called 2 of the 3 reps `elbow_moving`. The man's form
+is visibly correct -- elbows pinned to the ribs throughout.
+
+**Cause:** the clip is a *pure* side profile. The far arm is occluded for
+the entire video, so MediaPipe is estimating the far-side joints rather than
+seeing them. Per-channel comparison against the class means:
+
+| channel | correct | elbow_moving | this clip |
+|---|---|---|---|
+| left_shoulder_angle (near, visible) | 8.2 | 15.0 | **9.1** |
+| right_shoulder_angle (far, occluded) | 5.6 | 15.8 | **12.7** |
+
+The visible side reads as correct form; the occluded side reads as the error
+class. `left_right_asymmetry` is one of the 12 input channels and
+`right_shoulder_angle` is another, so occlusion noise on one arm is enough
+to flip the verdict.
+
+**Not a tempo problem.** The subject curls at 1.9 s/rep against a 4.6 s
+training mean, so the first hypothesis was that the model had learned tempo
+as a proxy for form. Widening the time-warp augmentation to 0.55x-2.2x was
+tried and *rejected*: the misclassifications became more confident (0.60 ->
+0.70) and cross-validated rep accuracy fell 0.927 -> 0.919. The change was
+reverted. Recording it here so the experiment is not repeated.
+
+**Consequences for the protocol:**
+
+1. Prefer a three-quarter view (roughly 30-45 degrees off-axis) over a pure
+   profile, for evaluation clips and for the app's own guidance. Both arms
+   need to be visible for the symmetry channels to mean anything.
+2. MediaPipe reports a `visibility` score per landmark. The converter
+   discards it. Carrying it through and gating the far-side channels on it
+   -- or falling back to near-side-only features when a limb is occluded --
+   is the principled fix, and belongs in the phone pipeline too.
+3. One clip with 3 repetitions is not an evaluation. This is a diagnostic
+   that produced a concrete, testable cause; it is not a transfer result.
