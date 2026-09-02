@@ -32,7 +32,7 @@ import pathlib
 import numpy as np
 import torch
 
-from .dataset import load_reps, windows_of
+from .dataset import feature_indices, load_reps, windows_of
 from .model import TCN
 from .schema import COACHING_CUES
 
@@ -49,7 +49,8 @@ def load_model(ckpt_path: str | pathlib.Path):
 
 def predict_rep(model, ckpt, frames: np.ndarray) -> np.ndarray:
     """Average the window probabilities across one repetition."""
-    chunks = list(windows_of(frames, ckpt["window"], stride=10))
+    cols = feature_indices(ckpt.get("feature_names"))
+    chunks = list(windows_of(frames[:, cols], ckpt["window"], stride=10))
     x = (np.stack(chunks) - ckpt["mean"]) / ckpt["std"]
     with torch.no_grad():
         probs = torch.softmax(model(torch.from_numpy(x.astype(np.float32))), dim=1)

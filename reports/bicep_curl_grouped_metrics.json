@@ -58,6 +58,7 @@
     "keep_duplicates": false,
     "leaky": false,
     "shuffle_labels": false,
+    "exclude": "",
     "seed": 0,
     "out": "reports"
   }

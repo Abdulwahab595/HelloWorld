@@ -21,18 +21,34 @@ import numpy as np
 
 from .schema import FRAME_FEATURES, MIRROR_PAIRS
 
-_ANGLE_CHANNELS = [
-    FRAME_FEATURES.index(n) for n in
-    ["knee_angle", "hip_angle", "elbow_angle", "right_elbow_angle",
-     "back_angle", "left_shoulder_angle", "right_shoulder_angle",
-     "avg_elbow_angle"]
-]
-_RATE1_CHANNELS = [FRAME_FEATURES.index(n) for n in ["velocity", "angular_velocity"]]
-_RATE2_CHANNELS = [FRAME_FEATURES.index("angular_acceleration")]
-_MIRROR_IDX = [(FRAME_FEATURES.index(a), FRAME_FEATURES.index(b)) for a, b in MIRROR_PAIRS]
+# Channel roles, by name.  Indices are resolved against whatever feature
+# subset is actually in use -- hardcoding positions breaks silently the
+# moment an ablation drops a channel, and the resulting IndexError is the
+# lucky case; a subset that happens to stay in range would corrupt the
+# wrong column instead.
+_ANGLE_NAMES = ["knee_angle", "hip_angle", "elbow_angle", "right_elbow_angle",
+                "back_angle", "left_shoulder_angle", "right_shoulder_angle",
+                "avg_elbow_angle"]
+_RATE1_NAMES = ["velocity", "angular_velocity"]
+_RATE2_NAMES = ["angular_acceleration"]
 
 
-def time_warp(seq: np.ndarray, factor: float, length: int | None = None) -> np.ndarray:
+def channel_roles(features: list[str] | None = None):
+    """Resolve (angle, rate1, rate2, mirror-pair) indices for a feature list."""
+    names = list(features) if features else list(FRAME_FEATURES)
+    pos = {n: i for i, n in enumerate(names)}
+    angles = [pos[n] for n in _ANGLE_NAMES if n in pos]
+    rate1 = [pos[n] for n in _RATE1_NAMES if n in pos]
+    rate2 = [pos[n] for n in _RATE2_NAMES if n in pos]
+    mirror = [(pos[a], pos[b]) for a, b in MIRROR_PAIRS if a in pos and b in pos]
+    return angles, rate1, rate2, mirror
+
+
+_ANGLE_CHANNELS, _RATE1_CHANNELS, _RATE2_CHANNELS, _MIRROR_IDX = channel_roles()
+
+
+def time_warp(seq: np.ndarray, factor: float, length: int | None = None,
+              rate1=None, rate2=None) -> np.ndarray:
     """Replay the rep `factor`x faster (factor > 1) or slower (factor < 1).
 
     The output is resampled back to `length` frames (default: unchanged) so it
@@ -45,21 +61,23 @@ def time_warp(seq: np.ndarray, factor: float, length: int | None = None) -> np.n
     out = np.empty((length, seq.shape[1]), dtype=np.float32)
     for j in range(seq.shape[1]):
         out[:, j] = np.interp(t_dst, t_src, seq[:, j])
-    out[:, _RATE1_CHANNELS] *= factor
-    out[:, _RATE2_CHANNELS] *= factor ** 2
+    out[:, _RATE1_CHANNELS if rate1 is None else rate1] *= factor
+    out[:, _RATE2_CHANNELS if rate2 is None else rate2] *= factor ** 2
     return out
 
 
-def jitter(seq: np.ndarray, sigma_deg: float, rng: np.random.Generator) -> np.ndarray:
+def jitter(seq: np.ndarray, sigma_deg: float, rng: np.random.Generator,
+           angles=None) -> np.ndarray:
     """Additive noise on the angle channels only, standing in for the
     frame-to-frame MediaPipe landmark flicker reported in the FYP-1 report."""
     out = seq.copy()
-    noise = rng.normal(0.0, sigma_deg, size=(len(seq), len(_ANGLE_CHANNELS)))
-    out[:, _ANGLE_CHANNELS] += noise.astype(np.float32)
+    a = _ANGLE_CHANNELS if angles is None else angles
+    noise = rng.normal(0.0, sigma_deg, size=(len(seq), len(a)))
+    out[:, a] += noise.astype(np.float32)
     return out
 
 
-def scale_rom(seq: np.ndarray, factor: float) -> np.ndarray:
+def scale_rom(seq: np.ndarray, factor: float, angles=None) -> np.ndarray:
     """Scale each angle channel about its own mean.
 
     Simulates a taller/shorter subject and a slightly different camera
@@ -67,27 +85,29 @@ def scale_rom(seq: np.ndarray, factor: float) -> np.ndarray:
     into an `incomplete_extension` one, which relabels the sample.
     """
     out = seq.copy()
-    block = out[:, _ANGLE_CHANNELS]
+    a = _ANGLE_CHANNELS if angles is None else angles
+    block = out[:, a]
     mean = block.mean(axis=0, keepdims=True)
-    out[:, _ANGLE_CHANNELS] = mean + (block - mean) * factor
+    out[:, a] = mean + (block - mean) * factor
     return out
 
 
-def offset(seq: np.ndarray, deg: float) -> np.ndarray:
+def offset(seq: np.ndarray, deg: float, angles=None) -> np.ndarray:
     """Constant angular bias -- a camera mounted a few degrees off-axis."""
     out = seq.copy()
-    out[:, _ANGLE_CHANNELS] += deg
+    out[:, _ANGLE_CHANNELS if angles is None else angles] += deg
     return out
 
 
-def mirror(seq: np.ndarray) -> np.ndarray:
+def mirror(seq: np.ndarray, pairs=None) -> np.ndarray:
     out = seq.copy()
-    for ia, ib in _MIRROR_IDX:
+    for ia, ib in (_MIRROR_IDX if pairs is None else pairs):
         out[:, [ia, ib]] = out[:, [ib, ia]]
     return out
 
 
-def crop_shift(seq: np.ndarray, rng: np.random.Generator, max_frac: float = 0.1) -> np.ndarray:
+def crop_shift(seq: np.ndarray, rng: np.random.Generator, max_frac: float = 0.1,
+               rate1=None, rate2=None) -> np.ndarray:
     """Trim up to `max_frac` off one end and stretch back to full length,
     modelling the rep-boundary jitter the report calls 'giant first-repetition
     contamination'."""
@@ -99,7 +119,7 @@ def crop_shift(seq: np.ndarray, rng: np.random.Generator, max_frac: float = 0.1)
     hi = n - rng.integers(0, k + 1)
     if hi - lo < 4:
         return seq
-    return time_warp(seq[lo:hi], 1.0, length=n)
+    return time_warp(seq[lo:hi], 1.0, length=n, rate1=rate1, rate2=rate2)
 
 
 class Augmenter:
@@ -119,7 +139,9 @@ class Augmenter:
         p_mirror: float = 0.3,
         p_crop: float = 0.3,
         seed: int = 0,
+        features: list[str] | None = None,
     ):
+        self.angles, self.rate1, self.rate2, self.pairs = channel_roles(features)
         self.strength = strength
         self.p = dict(time=p_time, jitter=p_jitter, scale=p_scale,
                       offset=p_offset, mirror=p_mirror, crop=p_crop)
@@ -131,17 +153,20 @@ class Augmenter:
         s, rng = self.strength, self.rng
         out = seq
         if rng.random() < self.p["time"]:
-            out = time_warp(out, float(rng.uniform(1 - 0.3 * s, 1 + 0.4 * s)))
+            out = time_warp(out, float(rng.uniform(1 - 0.3 * s, 1 + 0.4 * s)),
+                            rate1=self.rate1, rate2=self.rate2)
         if rng.random() < self.p["crop"]:
-            out = crop_shift(out, rng, max_frac=0.10 * s)
+            out = crop_shift(out, rng, max_frac=0.10 * s,
+                             rate1=self.rate1, rate2=self.rate2)
         if rng.random() < self.p["scale"]:
-            out = scale_rom(out, float(rng.uniform(1 - 0.08 * s, 1 + 0.08 * s)))
+            out = scale_rom(out, float(rng.uniform(1 - 0.08 * s, 1 + 0.08 * s)),
+                            angles=self.angles)
         if rng.random() < self.p["offset"]:
-            out = offset(out, float(rng.uniform(-4.0 * s, 4.0 * s)))
+            out = offset(out, float(rng.uniform(-4.0 * s, 4.0 * s)), angles=self.angles)
         if rng.random() < self.p["mirror"]:
-            out = mirror(out)
+            out = mirror(out, pairs=self.pairs)
         if rng.random() < self.p["jitter"]:
-            out = jitter(out, 1.5 * s, rng)
+            out = jitter(out, 1.5 * s, rng, angles=self.angles)
         return out.astype(np.float32)
 
 

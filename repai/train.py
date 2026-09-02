@@ -31,6 +31,7 @@ from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
 
 from .augment import Augmenter
 from .dataset import build_samples, class_counts, load_reps, windows_of
+from .schema import FRAME_FEATURES
 from .model import TCN
 
 
@@ -68,11 +69,13 @@ def drop_rare_classes(reps, min_sessions: int):
     return [r for r in reps if r.label in keep], dropped
 
 
-def train_fold(Xtr, ytr, Xte, yte, n_classes, args, device) -> tuple[np.ndarray, dict]:
+def train_fold(Xtr, ytr, Xte, yte, n_classes, args, device,
+               features=None) -> tuple[np.ndarray, dict]:
     mean = Xtr.reshape(-1, Xtr.shape[-1]).mean(axis=0)
     std = Xtr.reshape(-1, Xtr.shape[-1]).std(axis=0) + 1e-6
 
-    aug = Augmenter(strength=args.aug, seed=args.seed) if args.aug > 0 else None
+    aug = (Augmenter(strength=args.aug, seed=args.seed, features=features)
+           if args.aug > 0 else None)
     tr = WindowDataset(Xtr, ytr, mean, std, aug)
     te = WindowDataset(Xte, yte, mean, std, None)
     ltr = torch.utils.data.DataLoader(tr, batch_size=args.batch, shuffle=True, drop_last=False)
@@ -131,6 +134,9 @@ def main() -> int:
                     help="sanity control: randomly permute labels within the "
                          "dataset.  A correct pipeline must collapse to chance "
                          "(1/n_classes).  Anything above that is a leak or a bug.")
+    ap.add_argument("--exclude", default="",
+                    help="comma-separated frame features to drop, e.g. "
+                         "back_angle,left_shoulder_angle -- for ablations")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default="reports")
     args = ap.parse_args()
@@ -146,8 +152,15 @@ def main() -> int:
         return 1
 
     reps, dropped = drop_rare_classes(reps, args.min_sessions)
+    dropped_feats = [f.strip() for f in args.exclude.split(",") if f.strip()]
+    unknown = [f for f in dropped_feats if f not in FRAME_FEATURES]
+    if unknown:
+        print(f"unknown feature(s) {unknown}; valid names: {FRAME_FEATURES}")
+        return 1
+    kept_feats = [f for f in FRAME_FEATURES if f not in dropped_feats]
     X, y, groups, classes = build_samples(reps, mode=args.mode,
-                                          window=args.window, stride=args.stride)
+                                          window=args.window, stride=args.stride,
+                                          features=kept_feats)
 
     if args.shuffle_labels:
         # Permute labels at the *session* level, so every window of a recording
@@ -166,6 +179,8 @@ def main() -> int:
     print("=" * 78)
     print(f"sessions {len({r.group for r in reps})}   repetitions {len(reps)}   "
           f"samples {len(X)}   shape {X.shape[1:]}")
+    if dropped_feats:
+        print(f"excluded {dropped_feats}  ({len(kept_feats)} features kept)")
     print(f"classes  {classes}")
     print(f"balance  {class_counts(y, classes)}")
     if dropped:
@@ -198,7 +213,7 @@ def main() -> int:
     t0 = time.time()
     for k, (itr, ite) in enumerate(splitter.split(*split_args), 1):
         probs, state = train_fold(X[itr], y[itr], X[ite], y[ite],
-                                  len(classes), args, device)
+                                  len(classes), args, device, features=kept_feats)
         oof[ite] = probs
         f1 = f1_score(y[ite], probs.argmax(1), average="macro", zero_division=0)
         fold_f1.append(f1)
@@ -276,6 +291,7 @@ def main() -> int:
         torch.save({"state_dict": best[0]["model"], "mean": best[0]["mean"],
                     "std": best[0]["std"], "classes": classes,
                     "n_features": X.shape[-1], "window": args.window,
+                    "feature_names": kept_feats,
                     # so repai.predict can warn when asked to score files this
                     # model has already seen
                     "train_files": sorted({r.source_file for r in reps})}, ckpt)

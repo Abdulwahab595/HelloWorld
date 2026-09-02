@@ -145,14 +145,26 @@ def windows_of(seq: np.ndarray, size: int, stride: int) -> Iterator[np.ndarray]:
         yield tail
 
 
+def feature_indices(names: Sequence[str] | None) -> list[int]:
+    """Column indices for a feature subset, in FRAME_FEATURES order."""
+    if not names:
+        return list(range(len(FRAME_FEATURES)))
+    return [FRAME_FEATURES.index(n) for n in names]
+
+
 def build_samples(
     reps: Sequence[Rep],
     mode: str = "window",
     window: int = 30,
     stride: int = 10,
     rep_length: int = 64,
+    features: Sequence[str] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
     """Return `(X, y, groups, classes)`.
+
+    `features` selects a subset of FRAME_FEATURES, for ablations -- e.g.
+    dropping the hip-derived channels to test how much a clip's framing
+    matters.
 
     X       (N, T, F) float32
     y       (N,) int64 class index
@@ -175,7 +187,8 @@ def build_samples(
             ys.append(index[rep.label])
             gs.append(rep.group)
 
-    X = np.stack(xs).astype(np.float32)
+    cols = feature_indices(features)
+    X = np.stack(xs).astype(np.float32)[:, :, cols]
     y = np.asarray(ys, dtype=np.int64)
     groups = np.asarray(gs, dtype=object)
     return X, y, groups, classes
