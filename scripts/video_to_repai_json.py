@@ -56,6 +56,50 @@ def vertical_angle(a, b) -> float:
     return math.degrees(math.atan2(abs(b[0] - a[0]), abs(b[1] - a[1]) or 1e-6))
 
 
+# Landmarks the bicep-curl features actually depend on.  MediaPipe reports a
+# per-landmark `visibility` in [0, 1]; below ~0.6 it is extrapolating an
+# occluded or off-frame joint rather than observing it.  The angles it then
+# produces look perfectly plausible -- they sit inside the training range and
+# pass check_features.py -- but they are invented, and the model scores them
+# with full confidence.  Three real gym clips were scored 0/10, 5/6 and 8/16
+# before anyone noticed the elbow visibility was 0.18-0.33.
+KEY_LANDMARKS = {13: "left_elbow", 14: "right_elbow", 15: "left_wrist",
+                 16: "right_wrist", 11: "left_shoulder", 12: "right_shoulder",
+                 23: "left_hip", 24: "right_hip", 25: "left_knee", 26: "right_knee"}
+MIN_VISIBILITY = 0.60
+
+# Left/right pairs.  In a side view the far limb is always occluded, so a low
+# score on one side alone is expected and survivable -- the near-side angle is
+# still real.  What is fatal is *both* sides being low: then no measurement of
+# that joint was ever observed.
+LANDMARK_PAIRS = [("left_elbow", "right_elbow"), ("left_wrist", "right_wrist"),
+                  ("left_shoulder", "right_shoulder"), ("left_hip", "right_hip"),
+                  ("left_knee", "right_knee")]
+
+
+def grade_visibility(vis: dict[str, float]) -> tuple[list[str], list[str]]:
+    """Split the weak joints into fatal (neither side seen) and one-sided.
+
+    One-sided occlusion still matters: `right_shoulder_angle` and
+    `left_right_asymmetry` are model inputs computed from the far limb, so
+    their values are extrapolated even when the near side is perfect.  It is
+    a caveat, not a disqualification.
+    """
+    fatal, one_sided = [], []
+    for a, b in LANDMARK_PAIRS:
+        va, vb = vis.get(a, 1.0), vis.get(b, 1.0)
+        if va < MIN_VISIBILITY and vb < MIN_VISIBILITY:
+            fatal.append(f"{a.split('_')[1]} ({va:.2f}/{vb:.2f})")
+        elif min(va, vb) < MIN_VISIBILITY:
+            one_sided.append(f"{a.split('_')[1]} ({max(va, vb):.2f}/{min(va, vb):.2f})")
+    return fatal, one_sided
+
+
+def visibility_report(lm) -> dict[str, float]:
+    return {name: float(getattr(lm[i], "visibility", 1.0))
+            for i, name in KEY_LANDMARKS.items()}
+
+
 def frame_features(lm) -> dict:
     """Reproduce the 12 channels in repai.schema.FRAME_FEATURES."""
     p = {k: (lm[i].x, lm[i].y) for k, i in L.items()}
@@ -180,7 +224,28 @@ class PoseBackend:
     def __init__(self, model_path: str | None = None):
         import mediapipe as mp
         self.mp = mp
+        self.model_path = model_path
         self.legacy = hasattr(mp, "solutions")
+        self._open()
+
+    def reset(self) -> None:
+        """Start a fresh tracker for the next clip.
+
+        The Tasks API requires strictly increasing timestamps within one
+        landmarker, so reusing it across clips fails with "Input timestamp
+        must be monotonically increasing" the moment the second video
+        restarts at 0.  Resetting is also semantically right: tracking state
+        from one person's clip must not carry into another's.
+        """
+        try:
+            self.pose.close()
+        except Exception:
+            pass
+        self._open()
+
+    def _open(self) -> None:
+        mp = self.mp
+        model_path = self.model_path
         if self.legacy:
             self.pose = mp.solutions.pose.Pose(
                 model_complexity=1, min_detection_confidence=0.5,
@@ -219,7 +284,7 @@ def convert(path: pathlib.Path, exercise: str, label: str, pose, stride: int) ->
     if not cap.isOpened():
         return None
     fps = int(round(cap.get(cv2.CAP_PROP_FPS) or 30)) or 30
-    frames, idx, kept = [], 0, 0
+    frames, idx, kept, vis = [], 0, 0, []
     while True:
         ok, img = cap.read()
         if not ok:
@@ -228,6 +293,7 @@ def convert(path: pathlib.Path, exercise: str, label: str, pose, stride: int) ->
             ts = int(1000 * idx / fps)
             lm = pose.landmarks(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), ts)
             if lm is not None:
+                vis.append(visibility_report(lm))
                 frames.append({
                     "frame_id": kept,
                     "timestamp": ts,
@@ -244,7 +310,10 @@ def convert(path: pathlib.Path, exercise: str, label: str, pose, stride: int) ->
     reps = segment_reps(frames)
     if not reps:
         return None
+
+    mean_vis = {k: sum(v[k] for v in vis) / len(vis) for k in KEY_LANDMARKS.values()}
     return {
+        "landmark_visibility": {k: round(v, 2) for k, v in mean_vis.items()},
         "session_id": f"ext_{path.stem}_{int(time.time() * 1000) % 10 ** 9}",
         "user_id": f"ext_{path.stem[:12]}",
         "exercise": exercise,
@@ -287,19 +356,43 @@ def main() -> int:
     pose = PoseBackend(args.model)
     print(f"pose backend: {'legacy solutions API' if pose.legacy else 'Tasks API'}")
     ok = skipped = total_reps = 0
+    unusable: list[tuple[str, dict]] = []
     for v in videos:
+        pose.reset()   # fresh tracker per clip; see PoseBackend.reset
         session = convert(v, args.exercise, args.label, pose, args.stride)
         if session is None:
             skipped += 1
             print(f"  skip  {v.name}  (no pose / too short / no clean reps)")
             continue
+        fatal, one_sided = grade_visibility(session["landmark_visibility"])
+        nreps = len(session["reps"])
+        if fatal:
+            unusable.append(v.name)
+            print(f"  UNUSABLE  {v.name}  -> {nreps} reps, but neither side of "
+                  f"these joints was seen: " + ", ".join(fatal))
+        elif one_sided:
+            print(f"  ok*       {v.name}  -> {nreps} reps  (far side occluded: "
+                  + ", ".join(one_sided) + ")")
+        else:
+            print(f"  ok        {v.name}  -> {nreps} reps")
         dest = out / f"{args.exercise}_{args.label}_{v.stem}.json"
         dest.write_text(json.dumps(session, indent=1))
         ok += 1
         total_reps += len(session["reps"])
-        print(f"  ok    {v.name}  -> {len(session['reps'])} reps")
     pose.close()
     print(f"\nconverted {ok}/{len(videos)} videos, {total_reps} reps, {skipped} skipped")
+    if unusable:
+        print(f"\n!! {len(unusable)} clip(s) UNUSABLE: " + ", ".join(unusable))
+        print("   For the joints listed, neither the left nor the right side was")
+        print("   visible, so those angles are invented rather than measured.  They")
+        print("   still look plausible and will pass check_features.py, which only")
+        print("   checks value ranges -- but a prediction from them means nothing.")
+        print("   Re-shoot with the whole body in frame, good lighting, and clothing")
+        print("   that contrasts with the background.")
+    print("\n   `ok*` means one side was occluded, which is normal for a side-on")
+    print("   view.  The near-side angles are real, but the symmetry channels")
+    print("   (right_shoulder_angle, left_right_asymmetry) are extrapolated, so")
+    print("   treat a borderline verdict on such a clip with suspicion.")
     print(f"now run:  python scripts/audit_dataset.py {args.out.split('/DATASET')[0]}"
           "/DATASET_COLLECTION")
     return 0

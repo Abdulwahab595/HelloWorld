@@ -230,3 +230,64 @@ estimate there can flip the verdict on its own.
 4. Two clips, 7 repetitions total, is a diagnostic -- not an evaluation.
    The held-out-subject number still has to come from recording real people
    with the app.
+
+### Field note: three real gym clips, and why they scored badly
+
+Three phone clips (720x1280 portrait, 28 fps, dim gym, second person in the
+background), labelled before scoring: `correct` (16 reps), `fast_swing`
+(6 reps), `incomplete_extension` (10 reps).
+
+Results: 8/16 on `correct`, 0/10 on `incomplete_extension`, and the
+`fast_swing` clip is unscoreable because that class was dropped from the
+model for having a single training session.
+
+**Not the cause: pose-estimation failure.** The tracker locked onto the right
+subject despite the background person, and near-side landmarks are excellent
+(elbow 0.96-0.99). An earlier reading of this as "the tracker cannot see the
+elbow" was an artefact of measuring only left-side indices, which happen to be
+the *far* side in these clips.
+
+**Not the cause: occlusion.** These clips grade `ok*` -- near side seen, far
+side occluded -- which is exactly the grade of the AI-generated clip that
+scored 4/4. Side-on occlusion alone does not separate success from failure.
+
+**The cause: the legs are cropped out of frame.** All three clips are framed
+from roughly mid-thigh up. MediaPipe still emits hip and knee landmarks, but
+places the hip high, inside the torso, and extrapolates the knee past the
+bottom edge. Two model inputs are computed from the hip:
+
+- `back_angle` = torso against vertical, via mid-hip -> mid-shoulder
+- `left/right_shoulder_angle` = angle(elbow, shoulder, **hip**)
+
+Both distort, and they distort toward the error class:
+
+| channel | correct | elbow_moving | AI clip | gym `correct` | gym `partial` |
+|---|---|---|---|---|---|
+| left_shoulder_angle | 8.2 | 15.0 | 2.2 | **14.2** | **27.7** |
+| back_angle | 89.7 | 93.3 | 88.6 | **79.4** | **79.9** |
+
+The gym clips' shoulder angle lands on the `elbow_moving` mean, so the model
+calls elbow drift on correct form. It is reading real geometry -- the geometry
+is just wrong, because it was derived from an invented hip.
+
+**Why check_features.py passed them:** it grades each channel's mean against
+the training distribution, and these sit at z = 2.2-2.9 -- flagged as
+"drifting" but under the failure threshold. A channel can be confidently
+wrong while still landing in a plausible range. Range checking cannot detect
+a misplaced landmark; only visibility and framing can.
+
+**Consequences:**
+
+1. **Frame the whole body, head to feet.** This outranks camera angle,
+   lighting and background. Four of the twelve inputs derive from hip, knee
+   or ankle, and a cropped frame does not remove them -- it fabricates them,
+   which is worse.
+2. The converter now grades per left/right pair and prints `UNUSABLE` when
+   neither side of a joint was seen, `ok*` when only the far side is
+   occluded. `ok*` is a caveat, not a pass: the symmetry channels are
+   extrapolated on such clips.
+3. A framing check belongs in the phone app too. If ankles are not in frame,
+   REP-AI should tell the user to step back before recording rather than
+   silently scoring invented geometry.
+4. `fast_swing` cannot be evaluated at all until more than one session of it
+   exists. Recording it is cheap and removes a hole in the taxonomy.
