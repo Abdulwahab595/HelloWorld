@@ -147,3 +147,70 @@ drift identifies `elbow_moving`. Both match the mechanism claimed in section
 4.2.6.2. The distributions overlap enough that a threshold rule would be
 mediocre — which is the honest argument for the TCN, and a better answer to
 *"why not just use if-statements?"* than any of the slides currently give.
+
+## 7. The far arm is not measured — it is inferred
+
+Confirmed with the data collector: the bicep-curl sessions were recorded
+**one-armed, from a pure side view**. The far arm was occluded for the whole
+of every session.
+
+MediaPipe still emits landmarks for it, and the recorded data therefore
+contains a second arm that no camera ever saw. What it contains is a
+smoothed echo of the visible arm:
+
+| label | mean gap between elbow angles | cross-correlation lag | near-arm jerk | far-arm jerk |
+|---|---|---|---|---|
+| correct | 11.7 deg | 0.0 frames | 1.68 | 1.49 |
+| elbow_moving | 10.6 deg | 0.2 frames | **2.04** | **1.04** |
+| incomplete_extension | 8.4 deg | 0.1 frames | 1.11 | 1.16 |
+
+Zero lag and a small roughly constant offset. For contrast, a genuinely
+one-armed clip recorded front-on (both arms visible, one holding a dumbbell,
+one idle) gives a left/right elbow correlation of **0.01**; this collection
+gives **0.94**, and two genuinely two-armed side-view clips give 0.99-1.00.
+The collection looks two-armed because the estimator made it look that way.
+
+### It is load-bearing
+
+Retraining without the three far-arm-derived channels
+(`right_elbow_angle`, `right_shoulder_angle`, `left_right_asymmetry`):
+
+| model | rep accuracy | macro-F1 |
+|---|---|---|
+| all 12 channels | 0.927 | 0.928 |
+| far-arm channels removed | **0.865** | **0.865** |
+
+Six points of the headline number come from an arm the camera never saw.
+
+### Why an echo can carry signal at all
+
+A pure copy would be redundant and worth nothing. This is not a pure copy:
+the estimator smooths its guess, and *how much* it smooths depends on how
+erratic the visible motion is. The `elbow_moving` row shows it plainly --
+near-arm jerk 2.04 against far-arm jerk 1.04, a 2x gap, where `correct` and
+`incomplete_extension` show almost none. `left_right_asymmetry` therefore
+partly encodes *pose-estimator smoothing*, not limb asymmetry.
+
+That is a shortcut feature. It is predictive on this collection because the
+whole collection shares one camera setup, one subject and one arm. It will
+not transfer to a front view, to two-armed curls, or to a phone held at a
+different distance, and it may be part of why the two real-video tests in
+`DATASET_SOURCES.md` behaved as they did.
+
+### What to do
+
+1. **Report 0.865, or report 0.927 with this caveat attached.** The larger
+   number is not wrong, but it is not measuring what the section heading in a
+   report would imply.
+2. **Record test clips exactly as the training clips were recorded** -- one
+   arm, side view, same distance. Any other setup changes what the far-arm
+   channels mean, so the comparison stops being like-for-like.
+3. **For iteration 4, pick one and commit to it.** Either record both arms
+   visible, so the symmetry channels measure something real, or drop those
+   channels and ship the 0.865 model, which depends only on observed
+   geometry. Carrying MediaPipe's per-landmark `visibility` through the
+   feature pipeline makes this decision automatic per frame, and is already
+   the top-priority change in `DATASET_SOURCES.md`.
+4. **This belongs in the report.** Finding that six points of your own
+   accuracy rest on inferred data, and saying so, is a stronger result than
+   the six points.
