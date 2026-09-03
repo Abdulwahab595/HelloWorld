@@ -197,8 +197,34 @@ not transfer to a front view, to two-armed curls, or to a phone held at a
 different distance, and it may be part of why the two real-video tests in
 `DATASET_SOURCES.md` behaved as they did.
 
+### Held-out evidence that the shortcut hurts
+
+Both models were scored on the one available real clip whose far arm is
+genuinely visible -- a front-on single-dumbbell curl, 9 repetitions, correct
+form. It is the case the shortcut cannot survive: there
+`left_right_asymmetry` measures real limb asymmetry (43.8 deg) rather than
+estimator smoothing (10.4 deg in the collection).
+
+| model | cross-validated rep accuracy | front-on real clip |
+|---|---|---|
+| all 12 channels | 0.927 | **5/9 (56 %)** |
+| far-arm channels removed (9) | 0.865 | **8/9 (89 %)** |
+
+Six points gained in-distribution, thirty-three points lost out of it. That
+is the shape of a shortcut: it is not that the far-arm channels are noise,
+it is that they encode a property of the recording setup rather than of the
+movement.
+
+One clip and nine repetitions is thin evidence and should be quoted as such,
+but the direction matches the mechanism exactly, and no other reading of it
+is on offer.
+
 ### What to do
 
+0. **Prefer the 9-channel model for anything outside the original setup.**
+   `--exclude right_elbow_angle,right_shoulder_angle,left_right_asymmetry`.
+   The lower cross-validated number is the more honest and, on the only
+   out-of-setup evidence available, the more accurate one.
 1. **Report 0.865, or report 0.927 with this caveat attached.** The larger
    number is not wrong, but it is not measuring what the section heading in a
    report would imply.
