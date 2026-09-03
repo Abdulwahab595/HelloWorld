@@ -12,35 +12,35 @@
   "dropped_classes": {
     "fast_swing": 1
   },
-  "window_accuracy": 0.826710816777042,
-  "window_macro_f1": 0.8263223085354384,
-  "rep_accuracy": 0.8649193548387096,
-  "rep_macro_f1": 0.8649712272142454,
+  "window_accuracy": 0.8807947019867549,
+  "window_macro_f1": 0.8836946264946152,
+  "rep_accuracy": 0.9274193548387096,
+  "rep_macro_f1": 0.9279489950491392,
   "fold_macro_f1": [
-    0.9071828482190324,
-    0.814692221278532,
-    0.7869724542602313,
-    0.7777999882197832,
-    0.8488866741466451
+    0.9568698188272383,
+    0.8538810956969525,
+    0.8299191749643579,
+    0.8858653533065003,
+    0.9004195611698463
   ],
   "confusion_matrix": [
     [
-      142,
-      16,
-      26
-    ],
-    [
-      4,
-      144,
-      12
+      156,
+      5,
+      23
     ],
     [
       1,
-      8,
-      143
+      159,
+      0
+    ],
+    [
+      6,
+      1,
+      145
     ]
   ],
-  "params": 51219,
+  "params": 51795,
   "receptive_field": 61,
   "args": {
     "data": "data/raw/DATASET_COLLECTION",
@@ -58,7 +58,7 @@
     "keep_duplicates": false,
     "leaky": false,
     "shuffle_labels": false,
-    "exclude": "right_elbow_angle,right_shoulder_angle,left_right_asymmetry",
+    "exclude": "",
     "seed": 0,
     "out": "reports"
   }
